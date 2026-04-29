@@ -61,4 +61,14 @@ describe('RouteTracker', () => {
   it('returns undefined for unknown route', () => {
     expect(tracker.getStatsForRoute('DELETE', '/nonexistent')).toBeUndefined();
   });
+
+  it('records hits across multiple distinct paths', () => {
+    tracker.record(makeHit({ path: '/api/users' }));
+    tracker.record(makeHit({ path: '/api/orders' }));
+    tracker.record(makeHit({ path: '/api/orders' }));
+    const userStats = tracker.getStatsForRoute('GET', '/api/users');
+    const orderStats = tracker.getStatsForRoute('GET', '/api/orders');
+    expect(userStats!.hits).toBe(1);
+    expect(orderStats!.hits).toBe(2);
+  });
 });
