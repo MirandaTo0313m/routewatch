@@ -76,3 +76,11 @@ export function formatReportText(report: Report): string {
 
   return lines.join('\n');
 }
+
+/**
+ * Returns the top N routes by request count from a report.
+ * Useful for quickly identifying the most frequently hit endpoints.
+ */
+export function topRoutes(report: Report, n: number): RouteStats[] {
+  return report.routes.slice(0, Math.max(0, n));
+}
