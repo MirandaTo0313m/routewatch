@@ -15,6 +15,21 @@ export interface SampledRouteWatchOptions extends RouteWatchOptions {
 /**
  * Returns an Express middleware that only tracks requests passing the
  * sampling filter, then delegates to the standard routeWatch middleware.
+ *
+ * @param options - RouteWatch options extended with a `sampling` configuration.
+ *   The `sampling` field must be a valid {@link SamplingConfig}; an error is
+ *   thrown at setup time if the config is invalid so misconfiguration is caught
+ *   early rather than at request time.
+ * @returns An Express {@link RequestHandler} that skips tracking for requests
+ *   excluded by the sampler and forwards all others to the inner routeWatch
+ *   middleware.
+ *
+ * @example
+ * app.use(
+ *   sampledRouteWatch({
+ *     sampling: { rate: 0.1, excludePaths: ['/healthz'] },
+ *   })
+ * );
  */
 export function sampledRouteWatch(
   options: SampledRouteWatchOptions
