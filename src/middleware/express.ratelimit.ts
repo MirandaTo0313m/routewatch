@@ -1,79 +1,62 @@
-/**
- * Express middleware that attaches rate-limit violation detection
- * to routewatch hit tracking.
- */
+import type { Request, Response, NextFunction } from 'express';
 
-import type { Request, Response, NextFunction } from "express";
-import {
-  RateLimitConfig,
-  RouteHitTimestamp,
-  DEFAULT_RATE_LIMIT_CONFIG,
-  detectRateLimitViolations,
-  formatViolationMessage,
-} from "../ratelimit";
-
-export interface RateLimitMiddlewareOptions {
-  config?: RateLimitConfig;
-  /** Called when one or more violations are detected on a request */
-  onViolation?: (violations: ReturnType<typeof detectRateLimitViolations>) => void;
-  /** If true, respond with 429 when a violation is detected (default: false) */
-  block?: boolean;
+export interface RateLimitOptions {
+  maxRequests: number;
+  windowMs: number;
+  onViolation?: (info: ViolationInfo) => void;
+  keyBy?: (req: Request) => string;
 }
 
-/**
- * In-process store of recent hits. In production you'd replace this
- * with a shared store (Redis, etc.), but for local dev this is fine.
- */
-const hitStore: RouteHitTimestamp[] = [];
+export interface ViolationInfo {
+  ip: string;
+  method: string;
+  path: string;
+  count: number;
+  windowMs: number;
+}
 
-/** Exposed for testing / reset between test runs */
+interface HitEntry {
+  count: number;
+  resetAt: number;
+}
+
+let hitStore: Map<string, HitEntry> = new Map();
+
 export function clearHitStore(): void {
-  hitStore.length = 0;
+  hitStore = new Map();
 }
 
-export function rateLimitWatch(
-  options: RateLimitMiddlewareOptions = {}
-) {
-  const config = options.config ?? DEFAULT_RATE_LIMIT_CONFIG;
-  const block = options.block ?? false;
-  const onViolation =
-    options.onViolation ??
-    ((violations) => {
-      for (const v of violations) {
-        console.warn(formatViolationMessage(v));
-      }
-    });
+function defaultKey(req: Request): string {
+  return req.ip ?? 'unknown';
+}
 
-  return function rateLimitMiddleware(
-    req: Request,
-    res: Response,
-    next: NextFunction
-  ): void {
-    const method = req.method ?? "GET";
-    const path = req.path ?? req.url ?? "/";
+export function rateLimitWatch(options: RateLimitOptions) {
+  const { maxRequests, windowMs, onViolation, keyBy = defaultKey } = options;
 
-    hitStore.push({ method, path, timestamp: Date.now() });
+  return function (req: Request, res: Response, next: NextFunction): void {
+    const key = keyBy(req);
+    const now = Date.now();
 
-    // Prune old hits to avoid unbounded memory growth
-    const cutoff = Date.now() - config.windowMs;
-    while (hitStore.length > 0 && hitStore[0].timestamp < cutoff) {
-      hitStore.shift();
+    let entry = hitStore.get(key);
+
+    if (!entry || now >= entry.resetAt) {
+      entry = { count: 0, resetAt: now + windowMs };
     }
 
-    const violations = detectRateLimitViolations(hitStore, config);
+    entry.count += 1;
+    hitStore.set(key, entry);
 
-    if (violations.length > 0) {
-      onViolation(violations);
-      if (block) {
-        res.status(429).json({
-          error: "Too Many Requests",
-          violations: violations.map((v) => ({
-            method: v.method,
-            path: v.path,
-            hits: v.hits,
-          })),
-        });
-        return;
+    if (entry.count > maxRequests) {
+      const info: ViolationInfo = {
+        ip: req.ip ?? 'unknown',
+        method: req.method,
+        path: req.path,
+        count: entry.count,
+        windowMs,
+      };
+
+      if (onViolation) {
+        onViolation(info);
       }
     }
 
