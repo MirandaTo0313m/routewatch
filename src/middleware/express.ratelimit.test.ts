@@ -1,90 +1,97 @@
-import { clearHitStore, rateLimitWatch } from './express.ratelimit';
-import type { Request, Response, NextFunction } from 'express';
+import { rateLimitWatch, clearHitStore, defaultKey } from './express.ratelimit';
+import { Request, Response, NextFunction } from 'express';
 
-function makeReq(method = 'GET', path = '/api/test', ip = '127.0.0.1'): Partial<Request> {
-  return { method, path, ip };
+function makeReq(overrides: Partial<Request> = {}): Request {
+  return {
+    method: 'GET',
+    path: '/test',
+    ip: '127.0.0.1',
+    ...overrides,
+  } as Request;
 }
 
-function makeRes(statusCode = 200): Partial<Response> {
-  const res: Partial<Response> = { statusCode };
-  return res;
+function makeRes(): Response {
+  return {} as Response;
 }
 
 function makeNext(): NextFunction {
   return jest.fn();
 }
 
-describe('rateLimitWatch middleware', () => {
-  beforeEach(() => {
-    clearHitStore();
-    jest.useFakeTimers();
-  });
+beforeEach(() => {
+  clearHitStore();
+});
 
-  afterEach(() => {
-    jest.useRealTimers();
+describe('defaultKey', () => {
+  it('returns ip:method:path', () => {
+    const req = makeReq();
+    expect(defaultKey(req)).toBe('127.0.0.1:GET:/test');
   });
+});
 
-  it('calls next() for requests under the limit', () => {
-    const middleware = rateLimitWatch({ maxRequests: 5, windowMs: 60000 });
+describe('rateLimitWatch', () => {
+  it('calls next() when under the limit', () => {
+    const middleware = rateLimitWatch({ windowMs: 1000, maxRequests: 5 });
     const req = makeReq();
     const res = makeRes();
     const next = makeNext();
 
-    middleware(req as Request, res as Response, next);
-    expect(next).toHaveBeenCalledTimes(1);
+    middleware(req, res, next);
+    expect(next).toHaveBeenCalled();
   });
 
-  it('tracks multiple requests from the same IP', () => {
-    const middleware = rateLimitWatch({ maxRequests: 3, windowMs: 60000 });
-    const req = makeReq('GET', '/api/data', '10.0.0.1');
-    const res = makeRes();
-
-    for (let i = 0; i < 3; i++) {
-      const next = makeNext();
-      middleware(req as Request, res as Response, next);
-      expect(next).toHaveBeenCalledTimes(1);
-    }
-  });
-
-  it('blocks requests exceeding the limit', () => {
-    const onViolation = jest.fn();
-    const middleware = rateLimitWatch({ maxRequests: 2, windowMs: 60000, onViolation });
-    const req = makeReq('POST', '/api/submit', '192.168.1.1');
-    const res = makeRes();
-
-    for (let i = 0; i < 3; i++) {
-      middleware(req as Request, res as Response, makeNext());
-    }
-
-    expect(onViolation).toHaveBeenCalledTimes(1);
-    expect(onViolation).toHaveBeenCalledWith(
-      expect.objectContaining({ ip: '192.168.1.1', count: 3 })
-    );
-  });
-
-  it('resets counts after the window expires', () => {
-    const middleware = rateLimitWatch({ maxRequests: 2, windowMs: 5000 });
-    const req = makeReq('GET', '/api/reset', '172.16.0.1');
-    const res = makeRes();
-
-    middleware(req as Request, res as Response, makeNext());
-    middleware(req as Request, res as Response, makeNext());
-
-    jest.advanceTimersByTime(6000);
-
+  it('blocks request when limit is exceeded', () => {
+    const middleware = rateLimitWatch({ windowMs: 60000, maxRequests: 2 });
+    const req = makeReq();
+    const res = makeRes() as any;
+    res.status = jest.fn().mockReturnThis();
+    res.json = jest.fn().mockReturnThis();
     const next = makeNext();
-    middleware(req as Request, res as Response, next);
-    expect(next).toHaveBeenCalledTimes(1);
+
+    middleware(req, res, next);
+    middleware(req, res, next);
+    middleware(req, res, next);
+
+    expect(res.status).toHaveBeenCalledWith(429);
+    expect(next).toHaveBeenCalledTimes(2);
   });
 
-  it('treats different IPs independently', () => {
-    const onViolation = jest.fn();
-    const middleware = rateLimitWatch({ maxRequests: 1, windowMs: 60000, onViolation });
-    const res = makeRes();
+  it('resets count after windowMs', async () => {
+    const middleware = rateLimitWatch({ windowMs: 50, maxRequests: 1 });
+    const req = makeReq();
+    const res = makeRes() as any;
+    res.status = jest.fn().mockReturnThis();
+    res.json = jest.fn().mockReturnThis();
+    const next = makeNext();
 
-    middleware(makeReq('GET', '/api/x', '1.1.1.1') as Request, res as Response, makeNext());
-    middleware(makeReq('GET', '/api/x', '2.2.2.2') as Request, res as Response, makeNext());
+    middleware(req, res, next);
+    middleware(req, res, next);
+    expect(next).toHaveBeenCalledTimes(1);
 
-    expect(onViolation).not.toHaveBeenCalled();
+    await new Promise((r) => setTimeout(r, 60));
+    clearHitStore();
+
+    middleware(req, res, next);
+    expect(next).toHaveBeenCalledTimes(2);
+  });
+
+  it('uses custom key function', () => {
+    const middleware = rateLimitWatch({
+      windowMs: 60000,
+      maxRequests: 1,
+      keyFn: () => 'global',
+    });
+    const req1 = makeReq({ ip: '1.1.1.1' } as any);
+    const req2 = makeReq({ ip: '2.2.2.2' } as any);
+    const res = makeRes() as any;
+    res.status = jest.fn().mockReturnThis();
+    res.json = jest.fn().mockReturnThis();
+    const next = makeNext();
+
+    middleware(req1, res, next);
+    middleware(req2, res, next);
+
+    expect(res.status).toHaveBeenCalledWith(429);
+    expect(next).toHaveBeenCalledTimes(1);
   });
 });

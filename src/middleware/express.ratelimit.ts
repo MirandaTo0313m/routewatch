@@ -1,63 +1,49 @@
-import type { Request, Response, NextFunction } from 'express';
+import { Request, Response, NextFunction } from 'express';
 
 export interface RateLimitOptions {
+  windowMs: number;
   maxRequests: number;
-  windowMs: number;
-  onViolation?: (info: ViolationInfo) => void;
-  keyBy?: (req: Request) => string;
+  keyFn?: (req: Request) => string;
+  message?: string;
 }
 
-export interface ViolationInfo {
-  ip: string;
-  method: string;
-  path: string;
+interface HitRecord {
   count: number;
-  windowMs: number;
+  windowStart: number;
 }
 
-interface HitEntry {
-  count: number;
-  resetAt: number;
-}
-
-let hitStore: Map<string, HitEntry> = new Map();
+let hitStore: Map<string, HitRecord> = new Map();
 
 export function clearHitStore(): void {
   hitStore = new Map();
 }
 
-function defaultKey(req: Request): string {
-  return req.ip ?? 'unknown';
+export function defaultKey(req: Request): string {
+  return `${req.ip}:${req.method}:${req.path}`;
 }
 
 export function rateLimitWatch(options: RateLimitOptions) {
-  const { maxRequests, windowMs, onViolation, keyBy = defaultKey } = options;
+  const { windowMs, maxRequests, keyFn = defaultKey, message = 'Too many requests' } = options;
 
   return function (req: Request, res: Response, next: NextFunction): void {
-    const key = keyBy(req);
+    const key = keyFn(req);
     const now = Date.now();
+    const existing = hitStore.get(key);
 
-    let entry = hitStore.get(key);
-
-    if (!entry || now >= entry.resetAt) {
-      entry = { count: 0, resetAt: now + windowMs };
+    if (!existing || now - existing.windowStart >= windowMs) {
+      hitStore.set(key, { count: 1, windowStart: now });
+      next();
+      return;
     }
 
-    entry.count += 1;
-    hitStore.set(key, entry);
+    existing.count += 1;
 
-    if (entry.count > maxRequests) {
-      const info: ViolationInfo = {
-        ip: req.ip ?? 'unknown',
-        method: req.method,
-        path: req.path,
-        count: entry.count,
-        windowMs,
-      };
-
-      if (onViolation) {
-        onViolation(info);
-      }
+    if (existing.count > maxRequests) {
+      res.status(429).json({
+        error: message,
+        retryAfter: Math.ceil((existing.windowStart + windowMs - now) / 1000),
+      });
+      return;
     }
 
     next();
