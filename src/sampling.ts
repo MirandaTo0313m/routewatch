@@ -28,6 +28,8 @@ export function shouldSample(
 
 /**
  * Resolves the effective sampling rate for a route.
+ * Checks routeOverrides first using the normalized "METHOD /path" key,
+ * then falls back to the global rate.
  */
 export function resolveRate(
   method: string,
@@ -57,9 +59,24 @@ export function validateSamplingConfig(config: SamplingConfig): void {
   }
   if (config.routeOverrides) {
     for (const [key, val] of Object.entries(config.routeOverrides)) {
-      if (typeof val !== 'number' || val < 0 || val > 1) {
+      if (typeof val !== 'number' || isNaN(val) || val < 0 || val > 1) {
         throw new Error(`routeOverrides['${key}'] must be a number between 0 and 1`);
       }
     }
   }
+}
+
+/**
+ * Creates a SamplingConfig with sensible defaults, merging the provided
+ * partial config over the defaults. Validates the result before returning.
+ */
+export function createSamplingConfig(
+  partial: Partial<SamplingConfig> = {}
+): SamplingConfig {
+  const config: SamplingConfig = {
+    rate: DEFAULT_RATE,
+    ...partial,
+  };
+  validateSamplingConfig(config);
+  return config;
 }
