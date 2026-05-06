@@ -71,4 +71,14 @@ describe('RouteTracker', () => {
     expect(userStats!.hits).toBe(1);
     expect(orderStats!.hits).toBe(2);
   });
+
+  it('resets stats and allows re-recording on the same route', () => {
+    tracker.record(makeHit({ responseTimeMs: 100 }));
+    tracker.reset();
+    tracker.record(makeHit({ responseTimeMs: 75 }));
+    const stats = tracker.getStatsForRoute('GET', '/api/users');
+    expect(stats).toBeDefined();
+    expect(stats!.hits).toBe(1);
+    expect(stats!.avgResponseTimeMs).toBe(75);
+  });
 });
