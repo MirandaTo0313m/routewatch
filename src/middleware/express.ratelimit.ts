@@ -1,49 +1,70 @@
 import { Request, Response, NextFunction } from 'express';
+import { trackHit } from '../tracker';
+import { detectRateLimitViolations } from '../ratelimit';
 
-export interface RateLimitOptions {
-  windowMs: number;
-  maxRequests: number;
-  keyFn?: (req: Request) => string;
-  message?: string;
+type KeyFn = (req: Request) => string;
+
+interface RateLimitWatchOptions {
+  windowMs?: number;
+  maxRequests?: number;
+  keyFn?: KeyFn;
+  onViolation?: (message: string, req: Request) => void;
+  ignore?: string[];
 }
 
-interface HitRecord {
-  count: number;
-  windowStart: number;
+const hitStore: Map<string, { count: number; windowStart: number }> = new Map();
+
+export function clearHitStore() {
+  hitStore.clear();
 }
 
-let hitStore: Map<string, HitRecord> = new Map();
+export const defaultKey: KeyFn = (req) =>
+  `${req.ip}:${req.method}:${req.path}`;
 
-export function clearHitStore(): void {
-  hitStore = new Map();
-}
+export function rateLimitWatch(options: RateLimitWatchOptions = {}) {
+  const {
+    windowMs = 60_000,
+    maxRequests = 100,
+    keyFn = defaultKey,
+    onViolation,
+    ignore = [],
+  } = options;
 
-export function defaultKey(req: Request): string {
-  return `${req.ip}:${req.method}:${req.path}`;
-}
+  return function (req: Request, res: Response, next: NextFunction) {
+    const path = req.path;
 
-export function rateLimitWatch(options: RateLimitOptions) {
-  const { windowMs, maxRequests, keyFn = defaultKey, message = 'Too many requests' } = options;
-
-  return function (req: Request, res: Response, next: NextFunction): void {
-    const key = keyFn(req);
-    const now = Date.now();
-    const existing = hitStore.get(key);
-
-    if (!existing || now - existing.windowStart >= windowMs) {
-      hitStore.set(key, { count: 1, windowStart: now });
-      next();
-      return;
+    if (ignore.some((p) => path.startsWith(p))) {
+      return next();
     }
 
-    existing.count += 1;
+    const now = Date.now();
+    const key = keyFn(req);
+    const entry = hitStore.get(key);
 
-    if (existing.count > maxRequests) {
-      res.status(429).json({
-        error: message,
-        retryAfter: Math.ceil((existing.windowStart + windowMs - now) / 1000),
+    if (!entry || now - entry.windowStart > windowMs) {
+      hitStore.set(key, { count: 1, windowStart: now });
+    } else {
+      entry.count += 1;
+    }
+
+    const current = hitStore.get(key)!;
+
+    trackHit({
+      method: req.method,
+      path,
+      statusCode: res.statusCode,
+      timestamp: now,
+      responseTimeMs: 0,
+    });
+
+    if (current.count > maxRequests) {
+      const violations = detectRateLimitViolations(
+        [{ method: req.method, path, statusCode: res.statusCode, timestamp: now, responseTimeMs: 0 }],
+        { windowMs, maxRequests }
+      );
+      violations.forEach((v) => {
+        if (onViolation) onViolation(v.message, req);
       });
-      return;
     }
 
     next();

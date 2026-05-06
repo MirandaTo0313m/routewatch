@@ -4,18 +4,18 @@ import { Request, Response, NextFunction } from 'express';
 function makeReq(overrides: Partial<Request> = {}): Request {
   return {
     method: 'GET',
-    path: '/test',
+    path: '/api/test',
     ip: '127.0.0.1',
     ...overrides,
-  } as Request;
+  } as unknown as Request;
 }
 
-function makeRes(): Response {
-  return {} as Response;
+function makeRes(statusCode = 200): Response {
+  return { statusCode } as unknown as Response;
 }
 
 function makeNext(): NextFunction {
-  return jest.fn();
+  return jest.fn() as unknown as NextFunction;
 }
 
 beforeEach(() => {
@@ -23,75 +23,69 @@ beforeEach(() => {
 });
 
 describe('defaultKey', () => {
-  it('returns ip:method:path', () => {
+  it('returns a composite key from ip, method, and path', () => {
     const req = makeReq();
-    expect(defaultKey(req)).toBe('127.0.0.1:GET:/test');
+    expect(defaultKey(req)).toBe('127.0.0.1:GET:/api/test');
   });
 });
 
-describe('rateLimitWatch', () => {
-  it('calls next() when under the limit', () => {
-    const middleware = rateLimitWatch({ windowMs: 1000, maxRequests: 5 });
-    const req = makeReq();
-    const res = makeRes();
+describe('rateLimitWatch middleware', () => {
+  it('calls next for normal requests', () => {
+    const middleware = rateLimitWatch({ maxRequests: 5 });
     const next = makeNext();
-
-    middleware(req, res, next);
+    middleware(makeReq(), makeRes(), next);
     expect(next).toHaveBeenCalled();
   });
 
-  it('blocks request when limit is exceeded', () => {
-    const middleware = rateLimitWatch({ windowMs: 60000, maxRequests: 2 });
-    const req = makeReq();
-    const res = makeRes() as any;
-    res.status = jest.fn().mockReturnThis();
-    res.json = jest.fn().mockReturnThis();
+  it('ignores paths matching ignore list', () => {
+    const middleware = rateLimitWatch({ ignore: ['/health'] });
     const next = makeNext();
-
-    middleware(req, res, next);
-    middleware(req, res, next);
-    middleware(req, res, next);
-
-    expect(res.status).toHaveBeenCalledWith(429);
-    expect(next).toHaveBeenCalledTimes(2);
+    middleware(makeReq({ path: '/health' } as Partial<Request>), makeRes(), next);
+    expect(next).toHaveBeenCalled();
   });
 
-  it('resets count after windowMs', async () => {
-    const middleware = rateLimitWatch({ windowMs: 50, maxRequests: 1 });
+  it('triggers onViolation when requests exceed maxRequests', () => {
+    const onViolation = jest.fn();
+    const middleware = rateLimitWatch({ maxRequests: 2, windowMs: 60_000, onViolation });
     const req = makeReq();
-    const res = makeRes() as any;
-    res.status = jest.fn().mockReturnThis();
-    res.json = jest.fn().mockReturnThis();
-    const next = makeNext();
+    const res = makeRes();
 
-    middleware(req, res, next);
-    middleware(req, res, next);
-    expect(next).toHaveBeenCalledTimes(1);
+    middleware(req, res, makeNext());
+    middleware(req, res, makeNext());
+    middleware(req, res, makeNext()); // 3rd — should trigger
 
-    await new Promise((r) => setTimeout(r, 60));
+    expect(onViolation).toHaveBeenCalled();
+  });
+
+  it('does not trigger onViolation within limit', () => {
+    const onViolation = jest.fn();
+    const middleware = rateLimitWatch({ maxRequests: 10, onViolation });
+    const req = makeReq();
+    const res = makeRes();
+
+    for (let i = 0; i < 5; i++) {
+      middleware(req, res, makeNext());
+    }
+
+    expect(onViolation).not.toHaveBeenCalled();
+  });
+
+  it('resets count after window expires', () => {
+    jest.useFakeTimers();
+    const onViolation = jest.fn();
+    const middleware = rateLimitWatch({ maxRequests: 2, windowMs: 1000, onViolation });
+    const req = makeReq();
+    const res = makeRes();
+
+    middleware(req, res, makeNext());
+    middleware(req, res, makeNext());
+    middleware(req, res, makeNext()); // triggers
+
+    jest.advanceTimersByTime(2000);
     clearHitStore();
 
-    middleware(req, res, next);
-    expect(next).toHaveBeenCalledTimes(2);
-  });
-
-  it('uses custom key function', () => {
-    const middleware = rateLimitWatch({
-      windowMs: 60000,
-      maxRequests: 1,
-      keyFn: () => 'global',
-    });
-    const req1 = makeReq({ ip: '1.1.1.1' } as any);
-    const req2 = makeReq({ ip: '2.2.2.2' } as any);
-    const res = makeRes() as any;
-    res.status = jest.fn().mockReturnThis();
-    res.json = jest.fn().mockReturnThis();
-    const next = makeNext();
-
-    middleware(req1, res, next);
-    middleware(req2, res, next);
-
-    expect(res.status).toHaveBeenCalledWith(429);
-    expect(next).toHaveBeenCalledTimes(1);
+    middleware(req, res, makeNext()); // new window, no violation
+    expect(onViolation).toHaveBeenCalledTimes(1);
+    jest.useRealTimers();
   });
 });
