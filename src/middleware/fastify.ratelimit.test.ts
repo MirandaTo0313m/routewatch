@@ -12,6 +12,17 @@ async function buildApp(
   return app;
 }
 
+/** Helper to fire `count` requests to `url` on `app` sequentially. */
+async function fireRequests(
+  app: FastifyInstance,
+  url: string,
+  count: number
+): Promise<void> {
+  for (let i = 0; i < count; i++) {
+    await app.inject({ method: "GET", url });
+  }
+}
+
 beforeEach(() => {
   clearHitStore();
 });
@@ -30,8 +41,7 @@ describe("fastifyRateLimitWatch", () => {
       blockOnViolation: true,
     });
 
-    await app.inject({ method: "GET", url: "/api/data" });
-    await app.inject({ method: "GET", url: "/api/data" });
+    await fireRequests(app, "/api/data", 2);
     const res = await app.inject({ method: "GET", url: "/api/data" });
 
     expect(res.statusCode).toBe(429);
@@ -48,8 +58,7 @@ describe("fastifyRateLimitWatch", () => {
       onViolation: (msg) => violations.push(msg),
     });
 
-    await app.inject({ method: "GET", url: "/api/data" });
-    await app.inject({ method: "GET", url: "/api/data" });
+    await fireRequests(app, "/api/data", 2);
 
     expect(violations.length).toBeGreaterThan(0);
     expect(violations[0]).toMatch(/GET/);
@@ -64,9 +73,7 @@ describe("fastifyRateLimitWatch", () => {
       onViolation: (msg) => violations.push(msg),
     });
 
-    for (let i = 0; i < 5; i++) {
-      await app.inject({ method: "GET", url: "/health" });
-    }
+    await fireRequests(app, "/health", 5);
 
     expect(violations.length).toBe(0);
   });
@@ -78,7 +85,7 @@ describe("fastifyRateLimitWatch", () => {
       blockOnViolation: false,
     });
 
-    await app.inject({ method: "GET", url: "/api/data" });
+    await fireRequests(app, "/api/data", 1);
     const res = await app.inject({ method: "GET", url: "/api/data" });
     expect(res.statusCode).toBe(200);
   });
