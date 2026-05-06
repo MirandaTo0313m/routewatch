@@ -94,4 +94,21 @@ describe("authRouteWatch", () => {
     expect(getHits()).toHaveLength(0);
     expect(next).toHaveBeenCalled();
   });
+
+  it("records the correct method and path on the hit", () => {
+    const middleware = authRouteWatch({
+      getUserId: (req) => req.user?.id,
+    });
+    const req = makeReq({ method: "POST", path: "/api/orders", user: { id: "user-7" } });
+    const res = makeRes(201);
+    const next = makeNext();
+
+    middleware(req, res, next);
+    res.emit("finish");
+
+    const hits = getHits();
+    expect(hits).toHaveLength(1);
+    expect(hits[0].method).toBe("POST");
+    expect(hits[0].path).toBe("/api/orders");
+  });
 });
