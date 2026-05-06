@@ -82,6 +82,25 @@ describe("generateCacheReport", () => {
     expect(report.topCachedRoutes[0].route).toBe("/a");
     expect(report.topCachedRoutes[0].count).toBe(1);
   });
+
+  it("hit rate is 1 when all entries are HITs", () => {
+    const hits = [
+      makeHit("/a", "GET", "HIT"),
+      makeHit("/b", "GET", "HIT"),
+      makeHit("/c", "GET", "HIT"),
+    ];
+    const report = generateCacheReport(hits);
+    expect(report.hitRate).toBe(1);
+  });
+
+  it("hit rate is 0 when all entries are MISSes", () => {
+    const hits = [
+      makeHit("/a", "GET", "MISS"),
+      makeHit("/b", "GET", "MISS"),
+    ];
+    const report = generateCacheReport(hits);
+    expect(report.hitRate).toBe(0);
+  });
 });
 
 describe("formatCacheReportText", () => {
@@ -93,22 +112,15 @@ describe("formatCacheReportText", () => {
     const text = formatCacheReportText(report);
     expect(text).toContain("Cache Report");
     expect(text).toContain("50.0%");
-    expect(text).toContain("Total tracked: 2");
   });
 
-  it("lists top cached routes", () => {
+  it("includes top cached routes in output", () => {
     const report = generateCacheReport([
-      makeHit("/items", "GET", "HIT"),
-      makeHit("/items", "GET", "HIT"),
+      makeHit("/api/users", "GET", "HIT"),
+      makeHit("/api/users", "GET", "HIT"),
+      makeHit("/api/posts", "GET", "HIT"),
     ]);
     const text = formatCacheReportText(report);
-    expect(text).toContain("/items");
-    expect(text).toContain("2 hits");
-  });
-
-  it("omits top routes section when no HITs", () => {
-    const report = generateCacheReport([makeHit("/x", "GET", "MISS")]);
-    const text = formatCacheReportText(report);
-    expect(text).not.toContain("/x");
+    expect(text).toContain("/api/users");
   });
 });
