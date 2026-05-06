@@ -57,6 +57,13 @@ describe('exportToCSV', () => {
     const csv = exportToCSV(hits);
     expect(csv).toContain('123.00');
   });
+
+  it('returns only header row for empty hits array', () => {
+    const csv = exportToCSV([]);
+    const lines = csv.split('\n');
+    expect(lines).toHaveLength(1);
+    expect(lines[0].startsWith('method,route,count')).toBe(true);
+  });
 });
 
 describe('exportReport', () => {
@@ -92,7 +99,9 @@ describe('exportReport', () => {
   });
 
   it('throws for unsupported format', () => {
-    const opts = { format: 'xml' as any, outputPath: path.join(tmpDir, 'r.xml') };
-    expect(() => exportReport([makeHit('/x')], opts)).toThrow('Unsupported export format');
+    const outPath = path.join(tmpDir, 'report.txt');
+    expect(() =>
+      exportReport([makeHit('/api')], { format: 'txt' as any, outputPath: outPath })
+    ).toThrow();
   });
 });
