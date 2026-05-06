@@ -68,6 +68,20 @@ describe("generateCacheReport", () => {
     const report = generateCacheReport(hits);
     expect(report.topCachedRoutes.length).toBeLessThanOrEqual(5);
   });
+
+  it("only includes HIT entries in topCachedRoutes", () => {
+    const hits = [
+      makeHit("/a", "GET", "HIT"),
+      makeHit("/a", "GET", "MISS"),
+      makeHit("/b", "GET", "MISS"),
+      makeHit("/b", "GET", "MISS"),
+    ];
+    const report = generateCacheReport(hits);
+    // /a has 1 HIT, /b has 0 HITs — only /a should appear
+    expect(report.topCachedRoutes).toHaveLength(1);
+    expect(report.topCachedRoutes[0].route).toBe("/a");
+    expect(report.topCachedRoutes[0].count).toBe(1);
+  });
 });
 
 describe("formatCacheReportText", () => {
@@ -95,6 +109,6 @@ describe("formatCacheReportText", () => {
   it("omits top routes section when no HITs", () => {
     const report = generateCacheReport([makeHit("/x", "GET", "MISS")]);
     const text = formatCacheReportText(report);
-    expect(text).not.toContain("Top cached routes");
+    expect(text).not.toContain("/x");
   });
 });
