@@ -30,6 +30,11 @@ describe("detectRateLimitViolations", () => {
     expect(detectRateLimitViolations(hits, cfg, NOW)).toEqual([]);
   });
 
+  it("returns empty array when hits equal maxHits exactly", () => {
+    const hits = Array.from({ length: 3 }, () => makeHit("GET", "/api/users"));
+    expect(detectRateLimitViolations(hits, cfg, NOW)).toEqual([]);
+  });
+
   it("detects a violation when hits exceed maxHits", () => {
     const hits = Array.from({ length: 5 }, () => makeHit("GET", "/api/users"));
     const violations = detectRateLimitViolations(hits, cfg, NOW);
