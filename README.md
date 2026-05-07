@@ -47,9 +47,10 @@ After running your server, routewatch tracks hit counts, response times, and sta
 
 | Option | Type | Default | Description |
 |---|---|---|---|
-| `logLevel` | `string` | `"info"` | Log verbosity level |
+| `logLevel` | `string` | `"info"` | Log verbosity level (`"debug"`, `"info"`, `"warn"`, `"error"`) |
 | `visualize` | `boolean` | `false` | Generate HTML usage report |
 | `outputPath` | `string` | `"./report.html"` | Report output location |
+| `exclude` | `string[]` | `[]` | Route paths to exclude from tracking (e.g. `["/health", "/metrics"]`) |
 
 ## License
 
