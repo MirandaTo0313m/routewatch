@@ -11,6 +11,28 @@ const defaultOptions: Required<DashboardOptions> = {
   refreshInterval: 5000,
 };
 
+/**
+ * Renders a single table row for a route entry.
+ */
+function renderRow(r: { method: string; path: string; count: number; avgDurationMs: number | null; lastSeen: string | null }): string {
+  const avgMs = r.avgDurationMs != null ? `${r.avgDurationMs.toFixed(1)} ms` : 'N/A';
+  const lastSeen = r.lastSeen ? new Date(r.lastSeen).toLocaleString() : 'N/A';
+  return `<tr>
+        <td>${r.method}</td>
+        <td>${r.path}</td>
+        <td>${r.count}</td>
+        <td>${avgMs}</td>
+        <td>${lastSeen}</td>
+      </tr>`;
+}
+
+/**
+ * Generates a self-refreshing HTML dashboard page summarising RouteWatch hit data.
+ *
+ * @param hits - Array of recorded route hits.
+ * @param options - Optional display/refresh settings.
+ * @returns A complete HTML document string.
+ */
 export function generateDashboardHTML(
   hits: RouteHit[],
   options: DashboardOptions = {}
@@ -20,17 +42,7 @@ export function generateDashboardHTML(
 
   const rows = report.routes
     .sort((a, b) => b.count - a.count)
-    .map((r) => {
-      const avgMs = r.avgDurationMs != null ? `${r.avgDurationMs.toFixed(1)} ms` : 'N/A';
-      const lastSeen = r.lastSeen ? new Date(r.lastSeen).toLocaleString() : 'N/A';
-      return `<tr>
-        <td>${r.method}</td>
-        <td>${r.path}</td>
-        <td>${r.count}</td>
-        <td>${avgMs}</td>
-        <td>${lastSeen}</td>
-      </tr>`;
-    })
+    .map(renderRow)
     .join('\n');
 
   return `<!DOCTYPE html>
