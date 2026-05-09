@@ -1,101 +1,95 @@
 import { describe, it, expect } from "vitest";
-import {
-  generateBandwidthReport,
-  formatBandwidthReportText,
-  BandwidthHit,
-} from "./bandwidthreport";
+import { generateBandwidthReport, formatBandwidthReportText } from "./bandwidthreport";
+import { RouteHit } from "./tracker";
 
-function makeHit(
-  route: string,
-  method: string,
-  requestBytes: number,
-  responseBytes: number,
-  timestamp = Date.now()
-): BandwidthHit {
-  return { route, method, requestBytes, responseBytes, timestamp };
+function makeHit(overrides: Partial<RouteHit> = {}): RouteHit {
+  return {
+    route: "/api/data",
+    method: "GET",
+    statusCode: 200,
+    duration: 10,
+    timestamp: Date.now(),
+    requestBytes: 512,
+    responseBytes: 2048,
+    ...overrides,
+  };
 }
 
 describe("generateBandwidthReport", () => {
-  it("returns empty report for no hits", () => {
+  it("returns empty entries for no hits", () => {
     const report = generateBandwidthReport([]);
-    expect(report.totalHits).toBe(0);
-    expect(report.totalBytes).toBe(0);
-    expect(report.routes).toHaveLength(0);
+    expect(report.entries).toHaveLength(0);
+    expect(report.totalRequestBytes).toBe(0);
+    expect(report.totalResponseBytes).toBe(0);
   });
 
-  it("aggregates hits per route+method", () => {
+  it("aggregates bytes per route+method", () => {
     const hits = [
-      makeHit("/api/users", "GET", 100, 500),
-      makeHit("/api/users", "GET", 200, 600),
-      makeHit("/api/posts", "POST", 300, 200),
+      makeHit({ route: "/api/users", method: "GET", requestBytes: 100, responseBytes: 500 }),
+      makeHit({ route: "/api/users", method: "GET", requestBytes: 200, responseBytes: 1000 }),
+      makeHit({ route: "/api/users", method: "POST", requestBytes: 400, responseBytes: 200 }),
     ];
     const report = generateBandwidthReport(hits);
-    expect(report.totalHits).toBe(3);
-    expect(report.routes).toHaveLength(2);
+    const getEntry = report.entries.find((e) => e.method === "GET" && e.route === "/api/users");
+    expect(getEntry).toBeDefined();
+    expect(getEntry!.totalRequestBytes).toBe(300);
+    expect(getEntry!.totalResponseBytes).toBe(1500);
+    expect(getEntry!.hitCount).toBe(2);
+    expect(getEntry!.avgRequestBytes).toBe(150);
+    expect(getEntry!.avgResponseBytes).toBe(750);
   });
 
-  it("computes totals and averages correctly", () => {
+  it("computes totals across all routes", () => {
     const hits = [
-      makeHit("/api/users", "GET", 100, 400),
-      makeHit("/api/users", "GET", 300, 600),
+      makeHit({ requestBytes: 100, responseBytes: 200 }),
+      makeHit({ route: "/api/other", requestBytes: 300, responseBytes: 400 }),
     ];
     const report = generateBandwidthReport(hits);
-    const route = report.routes[0];
-    expect(route.totalRequestBytes).toBe(400);
-    expect(route.totalResponseBytes).toBe(1000);
-    expect(route.avgRequestBytes).toBe(200);
-    expect(route.avgResponseBytes).toBe(500);
-    expect(route.totalBytes).toBe(1400);
+    expect(report.totalRequestBytes).toBe(400);
+    expect(report.totalResponseBytes).toBe(600);
   });
 
-  it("sorts routes by totalBytes descending", () => {
+  it("sorts entries by totalResponseBytes descending", () => {
     const hits = [
-      makeHit("/small", "GET", 10, 10),
-      makeHit("/large", "GET", 1000, 2000),
-      makeHit("/medium", "GET", 100, 200),
+      makeHit({ route: "/small", responseBytes: 100 }),
+      makeHit({ route: "/large", responseBytes: 9000 }),
+      makeHit({ route: "/medium", responseBytes: 500 }),
     ];
     const report = generateBandwidthReport(hits);
-    expect(report.routes[0].route).toBe("/large");
-    expect(report.routes[1].route).toBe("/medium");
-    expect(report.routes[2].route).toBe("/small");
+    expect(report.entries[0].route).toBe("/large");
+    expect(report.entries[1].route).toBe("/medium");
+    expect(report.entries[2].route).toBe("/small");
   });
 
-  it("treats same route with different methods separately", () => {
-    const hits = [
-      makeHit("/api/data", "GET", 50, 200),
-      makeHit("/api/data", "POST", 300, 100),
-    ];
-    const report = generateBandwidthReport(hits);
-    expect(report.routes).toHaveLength(2);
-  });
-
-  it("sums global request and response bytes", () => {
-    const hits = [
-      makeHit("/a", "GET", 100, 200),
-      makeHit("/b", "POST", 50, 150),
-    ];
-    const report = generateBandwidthReport(hits);
-    expect(report.totalRequestBytes).toBe(150);
-    expect(report.totalResponseBytes).toBe(350);
-    expect(report.totalBytes).toBe(500);
+  it("handles missing requestBytes / responseBytes gracefully", () => {
+    const hit = makeHit({ requestBytes: undefined, responseBytes: undefined });
+    const report = generateBandwidthReport([hit]);
+    expect(report.entries[0].totalRequestBytes).toBe(0);
+    expect(report.entries[0].totalResponseBytes).toBe(0);
   });
 });
 
 describe("formatBandwidthReportText", () => {
-  it("includes header and route lines", () => {
-    const hits = [makeHit("/api/test", "GET", 128, 512)];
-    const report = generateBandwidthReport(hits);
+  it("includes header and generatedAt", () => {
+    const report = generateBandwidthReport([makeHit()]);
     const text = formatBandwidthReportText(report);
     expect(text).toContain("Bandwidth Report");
-    expect(text).toContain("/api/test");
-    expect(text).toContain("GET");
-    expect(text).toContain("total:");
+    expect(text).toContain(report.generatedAt);
   });
 
-  it("shows zero totals for empty report", () => {
-    const report = generateBandwidthReport([]);
+  it("lists route entries", () => {
+    const hits = [makeHit({ route: "/api/data", method: "GET", responseBytes: 2048 })];
+    const report = generateBandwidthReport(hits);
     const text = formatBandwidthReportText(report);
-    expect(text).toContain("Total Hits: 0");
-    expect(text).toContain("Total Bytes: 0");
+    expect(text).toContain("/api/data");
+    expect(text).toContain("GET");
+  });
+
+  it("formats bytes in human-readable units", () => {
+    const hits = [makeHit({ requestBytes: 2048, responseBytes: 1_100_000 })];
+    const report = generateBandwidthReport(hits);
+    const text = formatBandwidthReportText(report);
+    expect(text).toContain("KB");
+    expect(text).toContain("MB");
   });
 });

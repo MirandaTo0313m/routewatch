@@ -1,87 +1,83 @@
-export interface BandwidthHit {
-  route: string;
-  method: string;
-  requestBytes: number;
-  responseBytes: number;
-  timestamp: number;
-}
+import { RouteHit } from "./tracker";
 
-export interface BandwidthRouteStats {
+export interface BandwidthEntry {
   route: string;
   method: string;
-  hits: number;
   totalRequestBytes: number;
   totalResponseBytes: number;
+  hitCount: number;
   avgRequestBytes: number;
   avgResponseBytes: number;
-  totalBytes: number;
 }
 
 export interface BandwidthReport {
   generatedAt: string;
-  totalHits: number;
   totalRequestBytes: number;
   totalResponseBytes: number;
-  totalBytes: number;
-  routes: BandwidthRouteStats[];
+  entries: BandwidthEntry[];
 }
 
-export function generateBandwidthReport(hits: BandwidthHit[]): BandwidthReport {
-  const grouped = new Map<string, BandwidthHit[]>();
+export function generateBandwidthReport(hits: RouteHit[]): BandwidthReport {
+  const map = new Map<string, BandwidthEntry>();
 
   for (const hit of hits) {
     const key = `${hit.method}:${hit.route}`;
-    if (!grouped.has(key)) grouped.set(key, []);
-    grouped.get(key)!.push(hit);
+    if (!map.has(key)) {
+      map.set(key, {
+        route: hit.route,
+        method: hit.method,
+        totalRequestBytes: 0,
+        totalResponseBytes: 0,
+        hitCount: 0,
+        avgRequestBytes: 0,
+        avgResponseBytes: 0,
+      });
+    }
+    const entry = map.get(key)!;
+    entry.totalRequestBytes += hit.requestBytes ?? 0;
+    entry.totalResponseBytes += hit.responseBytes ?? 0;
+    entry.hitCount += 1;
   }
 
-  const routes: BandwidthRouteStats[] = [];
+  const entries = Array.from(map.values()).map((e) => ({
+    ...e,
+    avgRequestBytes: e.hitCount > 0 ? Math.round(e.totalRequestBytes / e.hitCount) : 0,
+    avgResponseBytes: e.hitCount > 0 ? Math.round(e.totalResponseBytes / e.hitCount) : 0,
+  }));
 
-  for (const [, group] of grouped) {
-    const first = group[0];
-    const totalRequestBytes = group.reduce((s, h) => s + h.requestBytes, 0);
-    const totalResponseBytes = group.reduce((s, h) => s + h.responseBytes, 0);
-    routes.push({
-      route: first.route,
-      method: first.method,
-      hits: group.length,
-      totalRequestBytes,
-      totalResponseBytes,
-      avgRequestBytes: Math.round(totalRequestBytes / group.length),
-      avgResponseBytes: Math.round(totalResponseBytes / group.length),
-      totalBytes: totalRequestBytes + totalResponseBytes,
-    });
-  }
+  entries.sort((a, b) => b.totalResponseBytes - a.totalResponseBytes);
 
-  routes.sort((a, b) => b.totalBytes - a.totalBytes);
-
-  const totalRequestBytes = hits.reduce((s, h) => s + h.requestBytes, 0);
-  const totalResponseBytes = hits.reduce((s, h) => s + h.responseBytes, 0);
+  const totalRequestBytes = entries.reduce((s, e) => s + e.totalRequestBytes, 0);
+  const totalResponseBytes = entries.reduce((s, e) => s + e.totalResponseBytes, 0);
 
   return {
     generatedAt: new Date().toISOString(),
-    totalHits: hits.length,
     totalRequestBytes,
     totalResponseBytes,
-    totalBytes: totalRequestBytes + totalResponseBytes,
-    routes,
+    entries,
   };
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes >= 1_048_576) return `${(bytes / 1_048_576).toFixed(2)} MB`;
+  if (bytes >= 1_024) return `${(bytes / 1_024).toFixed(2)} KB`;
+  return `${bytes} B`;
 }
 
 export function formatBandwidthReportText(report: BandwidthReport): string {
   const lines: string[] = [
     `Bandwidth Report — ${report.generatedAt}`,
-    `Total Hits: ${report.totalHits}`,
-    `Total Request Bytes:  ${report.totalRequestBytes}`,
-    `Total Response Bytes: ${report.totalResponseBytes}`,
-    `Total Bytes: ${report.totalBytes}`,
-    ``,
-    `Routes (sorted by total bytes):`,
+    `Total Request Traffic : ${formatBytes(report.totalRequestBytes)}`,
+    `Total Response Traffic: ${formatBytes(report.totalResponseBytes)}`,
+    "",
+    `${"-".repeat(72)}`,
+    `${ "Method".padEnd(8) }${ "Route".padEnd(32) }${ "Hits".padEnd(8) }${ "Req Avg".padEnd(12) }Res Avg`,
+    `${"-".repeat(72)}`,
   ];
 
-  for (const r of report.routes) {
+  for (const e of report.entries) {
     lines.push(
-      `  [${r.method}] ${r.route} — hits: ${r.hits}, req: ${r.avgRequestBytes}B avg, res: ${r.avgResponseBytes}B avg, total: ${r.totalBytes}B`
+      `${e.method.padEnd(8)}${e.route.padEnd(32)}${String(e.hitCount).padEnd(8)}${formatBytes(e.avgRequestBytes).padEnd(12)}${formatBytes(e.avgResponseBytes)}`
     );
   }
 
